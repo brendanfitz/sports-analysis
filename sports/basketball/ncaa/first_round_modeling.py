@@ -10,62 +10,30 @@ import numpy as np
 from sports.basketball.ncaa import BayesBetaBinomial
 import matplotlib.pyplot as plt
 from sports.basketball.ncaa.ncaa_tourney_games_spider import START_YEAR, END_YEAR, FILENAME
+from sports.basketball.ncaa import utils
 
-df = pd.read_csv(FILENAME)
-
-df.head()
+df = (pd.read_csv(FILENAME)
+    .rename(columns=lambda x: x.replace('team1', 'home').replace('team2', 'away'))
+    .rename(columns={'home_name': 'home_team', 'away_name': 'away_team'})
+)
 
 assert(63 * (END_YEAR - START_YEAR + 1) == df.shape[0]) # check games total
-assert(df.loc[df.team1_score == df.team2_score, ].empty) # no ties
+assert(df.loc[df.home_score == df.away_score, ].empty) # no ties
 
 year = 1985
 region = 'national'
 mask = (df.loc[:, 'year'] == year) & (df.loc[:, 'region'] == region)
 df.loc[mask, ]
 
+df.loc[:, 'seed_matchup'] = df.apply(utils.seed_matchup, axis=1)
 
-def seed_matchup(row):
-    seeds = sorted(
-        [
-            str(row['team1_seed']).zfill(2), 
-            str(row['team2_seed']).zfill(2)
-        ]
-    )
-    
-    return 'v'.join(seeds)
+df.loc[:, 'winner'] = np.where(df.home_score > df.away_score, 'home_team', 'away_team')
 
-df.loc[:, 'seed_matchup'] = df.apply(seed_matchup, axis=1)
-
-df.loc[:, 'winner'] = np.where(df.team1_score > df.team2_score, 'team1', 'team2')
-
-df.head()
-
-def seed_result(row):
-    if row['team1_seed'] == row['team2_seed']:
-        return 'equal_seeds'
-    
-    if (
-            (
-                row['winner']  == 'team1' 
-            and row['team1_seed'] < row['team2_seed']
-            )
-        or            
-            (
-                row['winner']  == 'team2' 
-            and row['team2_seed'] < row['team1_seed']
-            )
-        ):
-        return 'higher_seed_win'
-    
-    return 'lower_seed_win'
-    
-
-df.loc[: , 'seed_result'] = df.apply(seed_result, axis=1)
+df.loc[: , 'seed_result'] = df.apply(utils.seed_result, axis=1)
 
 df.groupby(['seed_matchup', 'seed_result']).count()
 
-
-equal_seeds_mask = df.loc[:, 'team1_seed'] == df.loc[:, 'team2_seed']
+equal_seeds_mask = df.loc[:, 'home_seed'] == df.loc[:, 'home_seed']
 df_seed_stats = (df.loc[~equal_seeds_mask, ['seed_matchup', 'seed_result']]
     .value_counts()
     .unstack('seed_result')
@@ -101,6 +69,9 @@ for matchup in first_round_matchups:
     plt.show()
     
     models[matchup] = model
+    
+g = utils.RidgePlot(models)
+plt.show()
 
 mask = df.loc[:, 'round'] == 1
 df_first_rounds = (df.loc[mask, ['seed_matchup', 'seed_result']]
@@ -111,7 +82,7 @@ df_first_rounds = (df.loc[mask, ['seed_matchup', 'seed_result']]
     .assign(
         total_games=lambda x: x.sum(axis=1),
         higher_seed_win_pct=lambda x: x.higher_seed_wins.div(x.total_games),
-        lower_seed_win_pct=lambda x: x.lower_seed_wins.div(x.total_games),
+        # lower_seed_win_pct=lambda x: x.lower_seed_wins.div(x.total_games),
         # higher_seed_win_pct_prior_mean=lambda x: x.index.map(lambda x: models[x].prior_dist.mean()),
         higher_seed_win_pct_posterior_mean=lambda x: x.index.map(lambda x: models[x].posterior_dist.mean()),
         higher_seed_win_pct_lower_bound=lambda x: x.index.map(lambda x: models[x].credible_interval()[0]),
@@ -120,4 +91,13 @@ df_first_rounds = (df.loc[mask, ['seed_matchup', 'seed_result']]
     )
 )
 
-df_first_rounds
+
+html = (df_first_rounds.apply(utils.numeric_col_formatter)
+    .drop(['total_games'], axis=1)
+    .rename(columns=lambda x: x.replace('_', ' ').title())
+    .to_html(classes="table", border=0, justify="left", index_names=False)
+    .replace('class="dataframe ', 'class="')
+)
+filename = "data/first_round_matchups.html"
+with open(filename, 'w') as f:
+    f.write(html)
