@@ -5,7 +5,19 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.ticker import PercentFormatter
+from sports.basketball.ncaa.ncaa_tourney_games_spider import START_YEAR, END_YEAR
+from bs4 import BeautifulSoup
 
+def data_checks(df):
+    # check games total
+    if not(63 * (END_YEAR - START_YEAR + 1) == df.shape[0]):
+        return {"result": "failed", "test": "games total"}
+    
+    # no ties
+    if not(df.loc[df.home_score == df.away_score, ].empty):
+        return {"result": "failed", "test": "no ties"}
+    
+    return {"result": "passed"}
 
 def seed_result(row):
     if row['home_seed'] == row['away_seed']:
@@ -66,7 +78,7 @@ def RidgePlot(models):
     
     
     pal = sns.cubehelix_palette(10, rot=-.25, light=.7)
-    g = sns.FacetGrid(df_dists, row="matchup", hue="matchup", aspect=15, height=.5, palette=pal, sharey=False)
+    g = sns.FacetGrid(df_dists, row="matchup", hue="matchup", aspect=15, height=.6, palette=pal, sharey=False)
     g.map(sns.lineplot, 'x', 'pdf', clip_on=False)
     
     g.map(label, "x")
@@ -90,3 +102,82 @@ def RidgePlot(models):
     g.fig.suptitle("Bayesian Posterior Distributions of Higher Seed Win Probability", **font_kwargs)
     
     return g
+
+def print_round(df, year, round_):
+    mask = (df.loc[:, 'year'] == year) & (df.loc[:, 'round'] == round_)
+    columns = ['region', 'home_seed', 'home_team', 'home_score', 'away_seed', 'away_team', 'away_score', 'winner']
+    g = df.loc[mask, columns].groupby('region')
+    
+    for region, results in g:
+        print(region.center(80)+ '\n' + '*' * 80)
+        for idx, row in results.iterrows():
+            if row['winner'] == 'home_team':
+                winning_team = row['home_team']
+                winning_score = row['home_score']
+                winning_seed = row['home_seed']
+                losing_team = row['away_team']
+                losing_score = row['away_score']
+                losing_seed = row['away_seed']
+            else:
+                winning_team = row['away_team']
+                winning_score = row['away_score']
+                winning_seed = row['away_seed']
+                losing_team = row['home_team']
+                losing_score = row['home_score'] 
+                losing_seed = row['home_seed']
+            
+            winning_team_and_seed = f"{winning_team} ({winning_seed})"
+            losing_team_and_seed = f"{losing_team} ({losing_seed})"
+            print(f"{winning_team_and_seed:30} {winning_score:3} | {losing_team_and_seed:30} {losing_score:3} | FINAL")
+        print('\n\n')
+        
+
+
+def create_df_first_rounds(df, models):
+    mask = df.loc[:, 'round'] == 1
+    df_first_rounds = (df.loc[mask, ['seed_matchup', 'seed_result']]
+        .value_counts()
+        .unstack('seed_result')
+        .fillna(0)
+        .rename(columns=lambda x: x.replace(' ', '_') + 's')
+        .assign(
+            total_games=lambda x: x.sum(axis=1),
+            higher_seed_win_pct=lambda x: x.higher_seed_wins.div(x.total_games),
+            # lower_seed_win_pct=lambda x: x.lower_seed_wins.div(x.total_games),
+            # higher_seed_win_pct_prior_mean=lambda x: x.index.map(lambda x: models[x].prior_dist.mean()),
+            higher_seed_win_pct_posterior_mean=lambda x: x.index.map(lambda x: models[x].posterior_dist.mean()),
+            higher_seed_win_pct_lower_bound=lambda x: x.index.map(lambda x: models[x].credible_interval()[0]),
+            higher_seed_win_pct_upper_bound=lambda x: x.index.map(lambda x: models[x].credible_interval()[1]),
+            confidence_interval_band=lambda x: x.higher_seed_win_pct_upper_bound - x.higher_seed_win_pct_lower_bound,
+            
+        )
+    )
+    
+    df_first_rounds.columns.name = None
+    
+    return df_first_rounds
+
+    
+def to_html(df, filepath):
+    html = df.to_html(justify="left")
+    
+    soup = BeautifulSoup(html, 'html.parser')
+    
+    table = soup.find('table')
+    table['class'] = 'table table-striped border border-secondary'
+    del table.attrs['border']
+    
+    thead = soup.find('thead')
+    thead['class'] = 'thead-dark'
+    
+    trs = thead.find_all('tr')
+    
+    if len(trs) > 1:
+        tr1, tr2 = trs
+        tr1.find('th').string = tr2.find('th').string.replace('_', ' ').title()
+        tr2.decompose()
+    
+    html = soup.prettify()
+    
+    with open(filepath, 'w') as f:
+        f.write(html)
