@@ -1,0 +1,27 @@
+---
+title: "damian_lillard"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Damian Lillard
+
+
+```{r packages}
+library(statsr)
+```
+
+```{r import}
+df <- read.csv('data/damian_lillard.csv')
+```
+
+
+```{r}
+inference(y=PTS, x=as.factor(bubble), data=df, type="ht", statistic="mean",
+          order=c(0, 1), method="theoretical", conf_level=0.95,
+          alternative="twosided")
+```
+
